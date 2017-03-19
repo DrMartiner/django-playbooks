@@ -1,0 +1,44 @@
+---
+nginx_sites:
+ "www_{{ name }}":
+    - server_name www.{{ domain }}
+    - return 301 http://{{ domain }}$request_uri
+
+ "{{ name }}":
+    - listen 80
+    - server_name {{ domain }}
+    - set $PROJECT_NAME {{ name }}
+    - set $ROOT_DIR /opt/projects/$PROJECT_NAME
+    - error_log /var/log/nginx/{{ name }}-error.log
+    - access_log /var/log/nginx/{{ name }}-access.log
+
+    - location / {
+
+        uwsgi_pass unix:///var/run/uwsgi/app/$PROJECT_NAME/socket;
+        include uwsgi_params;
+
+        gzip  on;
+        gzip_static on;
+
+        etag off;
+
+        uwsgi_buffering off;
+
+        uwsgi_buffers 8 128k;
+        client_max_body_size 30m;
+
+     }
+
+    - location /media/  {
+
+        root $ROOT_DIR/src/;
+        include static_params;
+
+     }
+
+    - location /static/  {
+
+        root $ROOT_DIR/src/;
+        include static_params;
+
+     }

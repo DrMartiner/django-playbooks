@@ -1,0 +1,173 @@
+---
+- hosts: webservers
+  # ansible-playbook /opt/playbooks/deploy_site.yml -i deploy/ansible_hosts --extra-vars="name=site domain=site.com local_path=$(pwd)"
+
+  vars:
+    remove_db: no
+    remove_dir: no
+
+  vars_prompt:
+    - name: 'ssl_certs_path'
+      prompt: "Have u got a SSL certs? Path to there ones"
+      private: no
+      default: ""
+
+  pre_tasks:
+    - shell: uuidgen
+      register: _uuid_full
+      tags: all
+
+    - shell: uuidgen | md5sum | cut -c1-10
+      register: _uuid_short
+      tags: all
+
+    - name: "Remove db '{{ db.name }}'"
+      postgresql_db: name="{{ db.name }}" state=absent
+      when: remove_db
+
+    - name: "Remove exists project"
+      file: path="{{ projects_dir }}/{{ name }}" state=absent
+      when: remove_dir
+
+    - name: "Load project's config"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/project.yml"
+        - vars_files/project.yml
+
+    - name: "Load Postgres's config"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/project/postgres.yml"
+        - vars_files/project/postgres.yml
+
+    - name: "Load .env config"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/project/env.yml"
+        - vars_files/project/env.yml
+
+    - name: "Load uWSGI's config"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/project/uwsgi.yml"
+        - vars_files/project/uwsgi.yml
+
+    - name: "Load Nginx's config"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/project/nginx.yml"
+        - vars_files/project/nginx.yml
+      when: ssl_certs_path == ''
+
+    - name: "Load Nginx's config with SSL"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/project/nginx.yml"
+        - vars_files/project/nginx_ssl.yml
+      when: ssl_certs_path != ''
+
+    - name: "Copy SSL certs"
+      copy:
+        src: "{{ ssl_certs_path }}/{{ name }}.{{ item }}"
+        dest: "/etc/ssl/private/{{ name }}.{{ item }}"
+        mode: 0650
+        owner: root
+        group: www-data
+      with_items: ['crt', 'key']
+      when: ssl_certs_path != ''
+
+  roles:
+    - role: ANXS.postgresql
+    - role: jdauphant.nginx
+
+  tasks:
+    - name: "Create project's dirs"
+      file: path={{ item }} state=directory
+            owner={{ owner }} group={{ group }} mode=0750
+      with_items:
+        - "{{ projects_dir }}/{{ name }}"
+        - "{{ dirs.conf }}"
+        - "{{ dirs.logs }}"
+        - "{{ dirs.media }}"
+        - "{{ dirs.static }}"
+
+    - name: "Upload sources"
+      synchronize:
+        src: "{{ local_path }}/src/"
+        dest: "{{ dirs.src }}"
+        delete: yes
+        recursive: yes
+        rsync_opts:
+          - "--compress"
+          - "--exclude=.DS_Store --exclude=*.pyc --exclude=*.coffee --exclude=.git --exclude=.svn"
+          - "--exclude=.env --exclude=media --exclude=settings_local.py"
+    - file: path="{{ dirs.src }}" recurse=yes
+            owner={{ owner }} group={{ group }}
+
+    - name: "Create .virtualenv & pip install"
+      pip: virtualenv={{ dirs.env }}
+           virtualenv_python={{ python_version }}
+           requirements={{ dirs.src }}/requirements.txt
+    - file: state=link force=yes
+            owner={{ owner }} group={{ group }} mode=770
+            src="{{ dirs.env }}/bin/activate"
+            dest="{{ projects_dir }}/{{ name }}/activate"
+
+    - name: "Upload uWSGI configs"
+      ini_file: dest="/etc/uwsgi/apps-available/{{ name }}.ini"
+                section=uwsgi option={{ item.key }} value="{{ item.value }}"
+      with_dict: "{{ uwsgi_ini_content }}"
+    - file: state=link force=yes
+            src=/etc/uwsgi/apps-available/{{ name }}.ini
+            dest=/etc/uwsgi/apps-enabled/{{ name }}.ini
+
+    - name: "Upload .env"
+      ini_file: dest="{{ dirs.src }}/.env"
+                owner="{{ owner }}" group="{{ group }}"
+                no_extra_spaces=yes section="main"
+                option={{ item.key }} value="{{ item.value }}"
+      with_dict: "{{ env_content }}"
+
+    - file: state=link force=yes
+            owner={{ owner }} group={{ group }}
+            src={{ item.src }} dest={{ item.dest }}
+      with_items:
+        - {src: '/var/log/nginx/{{ name }}-access.log', dest: '{{ dirs.logs }}/nginx-access.log'}
+        - {src: '/var/log/nginx/{{ name }}-error.log', dest: '{{ dirs.logs }}/nginx-error.log'}
+        - {src: '/var/log/uwsgi/app/{{ name }}.log', dest: '{{ dirs.logs }}/uwsgi.log'}
+
+        - {src: '/etc/nginx/sites-enabled/{{ name }}.conf', dest: '{{ dirs.conf }}/nginx.conf'}
+        - {src: '/etc/uwsgi/apps-enabled/{{ name }}.ini', dest: '{{ dirs.conf }}/uwsgi.ini'}
+
+    - django_manage:
+        command: migrate
+        app_path: "{{ dirs.src }}"
+        virtualenv: "{{ dirs.env }}"
+
+    - django_manage:
+        command: collectstatic
+        app_path: "{{ dirs.src }}"
+        virtualenv: "{{ dirs.env }}"
+    - file: path={{ dirs.static }} recurse=yes
+            owner={{ owner }} group={{ group }}
+
+    - service: name=uwsgi state=restarted
+    - service: name=nginx state=restarted
+
+    - command: "find {{ item }} -type d -exec chmod 770 {} +"
+      with_items:
+        - "{{ dirs.src }}"
+        - "{{ dirs.media }}"
+        - "{{ dirs.static }}"
+
+    - command: "find {{ item }} -type f -exec chmod 660 {} +"
+      with_items:
+        - "{{ dirs.src }}"
+        - "{{ dirs.media }}"
+        - "{{ dirs.static }}"
+
+
+    - file: path="{{ dirs.src }}/manage.py" mode=u+x
+
+    - debug: msg="Your Postgres password {{ db.pass }}"

@@ -1,0 +1,44 @@
+---
+- hosts: webservers
+  # ansible-playbook /opt/playbooks/delete_site.yml -i deploy/ansible_hosts --extra-vars="name=site local_path=$(pwd)"
+
+  pre_tasks:
+    - name: "Load project's config"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/project.yml"
+        - vars_files/project.yml
+
+  tasks:
+    - name: "Remove Nginx's configs"
+      file: path={{ item }} state=absent
+      ignore_errors: yes
+      with_items:
+        - "/etc/nginx/sites-enabled/{{ name }}.conf"
+        - "/etc/nginx/sites-available/{{ name }}.conf"
+        - "/etc/nginx/sites-enabled/www_{{ name }}.conf"
+        - "/etc/nginx/sites-available/www_{{ name }}.conf"
+      tags: nginx
+
+    - service: name=ssh state=restarted
+      tags: nginx
+
+    - name: "Remove uWSGI's configs"
+      file: state=absent
+            path="/etc/uwsgi/apps-enabled/{{ name }}.ini"
+      ignore_errors: yes
+      tags: uwsgi
+
+    - service: name=ssh state=restarted
+      tags: uwsgi
+
+    - name: "Remove project's dir"
+      file: state=absent
+            path="{{ projects_dir }}/{{ name }}"
+      ignore_errors: yes
+      tags: src
+
+    - name: "Remove database & user"
+      postgresql_user: db={{ name }} name={{ name }} state=absent
+      ignore_errors: yes
+      tags: db

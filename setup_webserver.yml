@@ -1,0 +1,144 @@
+---
+- hosts: webservers
+  ### At the remote
+  # apt-get update && apt-get upgrade -y && apt-get install openssh-server python
+  # sed -ri '/^PermitRootLogin/s/prohibit-password/yes/' /etc/ssh/sshd_config && service ssh restart
+
+  ### At the local
+  # ansible-playbook /opt/playbooks/setup_webserver.yml -i deploy/ansible_hosts --ask-pass [--limit <target host>]
+
+  vars_prompt:
+    - name: 'postgresql_ext_install_postgis'
+      prompt: "Should install PostGIS?"
+      default: no
+      private: no
+
+    - name: "ssh_key_path"
+      default: '~/.ssh/id_rsa.pub'
+      private: no
+
+  pre_tasks:
+    - shell: uuidgen
+      register: _uuid_full
+      tags: all
+
+    - shell: uuidgen | md5sum | cut -c1-10
+      register: _uuid_short
+      tags: all
+
+    - name: "Load project's config"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/project.yml"
+        - vars_files/project.yml
+
+    - name: "Load Postgres's config"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/server/postgres.yml"
+        - vars_files/server/postgres.yml
+
+    - name: "Load Nginx's config"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/server/nginx.yml"
+        - vars_files/server/nginx.yml
+
+    - name: "Load packages config"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/server/packages.yml"
+        - vars_files/server/packages.yml
+
+    - name: "Install locales package"
+      apt: name=locales state=latest
+
+    - name: "Set locale to en_US.UTF-8"
+      locale_gen: name=en_US.UTF-8 state=present
+
+    - name: "Remove Apache package"
+      apt: name=apache2 state=absent
+
+  vars_files:
+     - vars_files/project.yml
+
+  roles:
+      - role: ANXS.postgresql
+      - role: jdauphant.nginx
+
+  tasks:
+    - name: "Copy nginx's configs"
+      copy: src={{ item.path }} dest="/etc/nginx/{{ item.name }}"
+            mode=644 owner=root group=root
+      with_items:
+        - { path: server/nginx/uwsgi_params, name: uwsgi_params }
+        - { path: server/nginx/static_params, name: static_params }
+
+    - name: "Install packages"
+      apt: name={{item}} state=installed
+      with_items: "{{ packages }}"
+
+    - name: "Create symlinks"
+      file: src=/usr/lib/i386-linux-gnu/{{ item }}  dest=/usr/lib/{{ item }} state=link force=yes
+      with_items:
+        - libz.so
+        - libjpeg.so
+        - libfreetype.so
+
+    - pip: name=uwsgi
+
+    # Create user admin
+    - name: "Create admin group"
+      group: name={{ owner }} state=present
+
+    - name: "Create admin user"
+      user: name={{ owner }} shell=/bin/bash groups=admin append=yes
+
+    - name: "Add the rule to /etc/sudoers"
+      lineinfile:
+        dest: /etc/sudoers
+        state: present
+        regexp: '^admin'
+        line: '{{ owner }} ALL=(ALL) NOPASSWD:ALL'
+        validate: visudo -cf %s
+
+    - name: "Upload ssh key for admin"
+      file: path="/home/{{ owner }}/.ssh" state=directory
+            owner={{ owner }} group={{ group }} mode=0700
+    - copy: src={{ ssh_key_path }} dest="/home/{{ owner }}/.ssh/authorized_keys"
+            mode=0600 owner={{ owner }} group={{ group }}
+
+    - name: "Upload ssh key for root"
+      file: path=/root/.ssh state=directory
+            owner=root group=root mode=0700
+    - copy: src={{ ssh_key_path }} dest="/root/.ssh/authorized_keys"
+            mode=0600 owner=root group=root
+
+    - name: "Append to admin's .bashrc"
+      lineinfile:
+        dest: /home/{{ owner }}/.bashrc
+        line: "{{ item }}"
+      with_items:
+        - 'export EDITOR=mcedit'
+        - 'export LC_ALL="en_US.UTF-8"'
+        - 'export LC_CTYPE="en_US.UTF-8"'
+
+    - name: "Append to root's .bashrc"
+      lineinfile:
+        dest: /root/.bashrc
+        line: "{{ item }}"
+      with_items:
+        - 'export EDITOR=mcedit'
+        - 'export LC_ALL="en_US.UTF-8"'
+        - 'export LC_CTYPE="en_US.UTF-8"'
+
+    # Configure SSHd
+    - name: "Copy SSHd config"
+      copy: src=server/sshd_config dest="/etc/ssh/sshd_config"
+            mode=644 owner=root group=root
+
+    - service: name=ssh state=restarted
+
+    - name: /opt/projects
+      file: path=/opt/projects state=directory recurse=yes
+            owner={{ owner }} group={{ group }} mode=0750

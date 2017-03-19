@@ -1,0 +1,78 @@
+---
+- hosts: webservers
+  # ansible-playbook /opt/playbooks/deploy_site.yml -i deploy/ansible_hosts --extra-vars="name=site domain=site.com local_path=$(pwd)"
+
+  pre_tasks:
+    - name: "Load project's config"
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/project.yml"
+        - vars_files/project.yml
+
+    - name: Load Nginx's config
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/project/nginx.yml"
+        - vars_files/project/nginx.yml
+      tags: nginx
+
+    - name: Load uWSGI's config
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "{{ local_path }}/deploy/vars_files/project/uwsgi.yml"
+        - vars_files/project/uwsgi.yml
+      tags: uwsgi
+
+  roles:
+    - role: jdauphant.nginx
+      tags: nginx
+
+  tasks:
+    - name: "Upload sources"
+      synchronize:
+        src: "{{ local_path }}/src/"
+        dest: "{{ dirs.src }}"
+        delete: yes
+        recursive: yes
+        rsync_opts:
+          - "--compress"
+          - "--exclude=.DS_Store --exclude=*.pyc --exclude=*.coffee --exclude=.git --exclude=.svn"
+          - "--exclude=.env --exclude=media --exclude=settings_local.py"
+      tags: src
+
+    - name: "Install python requirements"
+      pip: virtualenv={{ dirs.env }}
+           virtualenv_python={{ python_version }}
+           requirements={{ dirs.src }}/requirements.txt
+      tags: pip
+    - file: path="{{ dirs.env }}" recurse=yes
+            owner={{ owner }} group={{ group }} mode=0750
+      tags: pip
+
+    - name: "Upload uWSGI configs"
+      ini_file: dest="/etc/uwsgi/apps-available/{{ name }}.ini"
+                section=uwsgi option={{ item.key }} value="{{ item.value }}"
+      with_dict: "{{ uwsgi_ini_content }}"
+      tags: uwsgi
+    - service: name=uwsgi state=restarted
+      tags: uwsgi
+
+    - name: "Migrate database"
+      django_manage:
+        command: "{{ migrate_command }}"
+        app_path: "{{ dirs.src }}"
+        virtualenv: "{{ dirs.env }}"
+      tags: db
+
+    - name: "Collect the project static"
+      django_manage:
+        command: collectstatic
+        app_path: "{{ dirs.src }}"
+        virtualenv: "{{ dirs.env }}"
+      tags: static
+    - file: path="{{ dirs.static }}" mode=0750 recurse=yes
+            owner={{ owner }} group={{ group }}
+      tags: static
+
+    - service: name=nginx state=restarted
+      tags: static, nginx

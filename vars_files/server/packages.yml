@@ -1,0 +1,37 @@
+packages:
+  - curl
+  - software-properties-common
+  - python-software-properties
+  - bash-completion
+  - python-dev
+
+  - uwsgi
+  - uwsgi-plugin-python
+  - libgeos-dev
+  - gdal-bin
+  - libsaga-dev
+  - python-gdal
+  - gcc
+  - make
+  - mc
+  - nmap
+  - htop
+  - git-core
+  - lynx
+
+  - libpcre3
+  - libpcre3-dev
+  - libssl-dev
+  - zlib1g-dev
+  - libfreetype6-dev
+  - build-essential
+  - libjpeg-dev
+  - python-pip
+  - libxml2-dev
+  - libxslt-dev
+  - python-imaging
+  - python-setuptools
+  - python-virtualenv
+  - libcurl4-gnutls-dev
+  - librtmp-dev
+  - libpq-dev

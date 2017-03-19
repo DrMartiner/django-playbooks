@@ -1,0 +1,23 @@
+---
+python_version: 'python'
+
+owner: admin
+group: www-data
+
+projects_dir: '/opt/projects'
+dirs:
+  src: "{{ projects_dir }}/{{ name }}/src"
+  env: "{{ projects_dir }}/{{ name }}/.virtualenv"
+  conf: "{{ projects_dir }}/{{ name }}/conf"
+  logs: "{{ projects_dir }}/{{ name }}/logs"
+
+  media: "{{ projects_dir }}/{{ name }}/src/media"
+  static: "{{ projects_dir }}/{{ name }}/src/static"
+
+db:
+  name: "{{ name }}"
+  user: "{{ name }}"
+  pass: "{{ _uuid_short.stdout }}"
+
+secret_key: "{{ _uuid_full.stdout }}"
+migrate_command: "migrate"

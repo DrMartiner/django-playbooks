@@ -1,0 +1,54 @@
+postgresql_version: 9.5
+postgresql_encoding: 'UTF-8'
+postgresql_locale: 'en_US.UTF-8'
+postgresql_ctype: 'en_US.UTF-8'
+
+postgresql_listen_addresses: ['localhost']
+
+postgresql_admin_user: "postgres"
+postgresql_default_auth_method: "trust"
+
+postgresql_ext_postgis_version: 2.2
+
+postgresql_databases:
+  - name: admin
+    owner: admin
+    encoding: 'UTF-8'
+    lc_ctype: 'en_US.UTF-8'
+    lc_collate: 'en_US.UTF-8'
+
+  - name: root
+    owner: root
+    encoding: 'UTF-8'
+    lc_ctype: 'en_US.UTF-8'
+    lc_collate: 'en_US.UTF-8'
+
+postgresql_users:
+  - name: admin
+    pass: "{{ _uuid_short.stdout }}"
+    encrypted: no
+
+  - name: root
+    pass: "{{ _uuid_short.stdout }}"
+    encrypted: no
+
+postgresql_user_privileges:
+  - name: admin
+    db: admin
+    priv: "ALL"
+    role_attr_flags: "SUPERUSER"
+
+  - name: root
+    db: root
+    priv: "ALL"
+    role_attr_flags: "SUPERUSER"
+
+postgresql_pg_hba_custom:
+  - {
+      type: host,
+      database: all,
+      user: all,
+      address: 'localhost',
+      method: trust,
+      comment: "All allow"
+  }

@@ -1,0 +1,18 @@
+---
+uwsgi_ini_content:
+    workers: 2
+    processes: 2
+    autoload: true
+    plugin: python
+
+    env: DJANGO_SETTINGS_MODULE=project.settings
+    module: project.wsgi
+
+    chdir: "{{ dirs.src }}"
+    virtualenv: "{{ dirs.env }}"
+    pythonpath: "{{ dirs.src }}"
+
+    harakiri: 30
+    buffer-size: 32768
+    reload-mercy: 8
+    max-requests: 5000
